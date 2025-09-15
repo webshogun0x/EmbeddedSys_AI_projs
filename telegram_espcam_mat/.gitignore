@@ -1,0 +1,20 @@
+# PlatformIO
+.pio/
+.vscode/
+
+# Secrets and credentials
+include/secrets.h
+
+# Build artifacts
+*.bin
+*.elf
+*.map
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE files
+*.swp
+*.swo
+*~
