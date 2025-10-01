@@ -8,6 +8,7 @@
 #include "soc/rtc_cntl_reg.h"
 #include <UniversalTelegramBot.h>
 #include <ArduinoJson.h>
+#include <esp_now.h>
 
 
 #include "camera_pins.h"
@@ -37,9 +38,19 @@ unsigned long lastTimeBotRan;
 bool flashState = LOW;
 volatile bool buttonPressed = false;
 
+
+// ESP-NOW
+uint8_t esp32c3Address[] = {0x10, 0x00, 0x3B, 0x09, 0x41, 0x8C}; // Replace with ESP32-C3 MAC address
+
+typedef struct {
+  char message[200];
+} MessageData;
+
 void startCameraServer();
 void handleClient();
 void IRAM_ATTR buttonISR();
+void sendMessageToDisplay(String msg);
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
 
 void handleNewMessages(int numNewMessages) {
   Serial.print("Handle New Messages: ");
@@ -60,18 +71,19 @@ void handleNewMessages(int numNewMessages) {
     if (text == "/start") {
       String welcome = "Welcome , " + from_name + "\n";
       welcome += "Use the following commands to interact with the ESP32-CAM \n";
-      welcome += "/photo : takes a new photo\n";
-      welcome += "/flash : toggles flash LED \n";
+      welcome += "/take_photo : takes a new photo\n";
+      welcome += "/msg <messages to Visitor>: to send message to the visitor \n";
       bot.sendMessage(CHAT_ID, welcome, "");
     }
-    if (text == "/flash") {
-      flashState = !flashState;
-      digitalWrite(FLASH_LED_PIN, flashState);
-      Serial.println("Change flash LED state");
-    }
-    if (text == "/photo") {
+
+    if (text == "/take_photo") {
       sendPhoto = true;
       Serial.println("New photo request");
+    }
+    if (text.startsWith("/msg ")) {
+      String message = text.substring(5); // Remove "/msg " prefix
+      sendMessageToDisplay(message);
+      bot.sendMessage(CHAT_ID, "Message sent to display: " + message, "");
     }
   }
 }
@@ -168,7 +180,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("hi");
-  delay(500);
+  delay(5000);
 //  pinMode(POWER, OUTPUT); 
 //  digitalWrite(POWER, LOW);
 //  pinMode(LED, OUTPUT); 
@@ -299,10 +311,50 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), buttonISR, FALLING);
   
   clientTCP.setInsecure();
+  
+  // Initialize ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
+  }
+  
+  esp_now_register_send_cb(onDataSent);
+  
+  // Add peer (ESP32-C3)
+  esp_now_peer_info_t peerInfo;
+  memcpy(peerInfo.peer_addr, esp32c3Address, 6);
+  peerInfo.channel = 0;
+  peerInfo.encrypt = false;
+  peerInfo.ifidx = WIFI_IF_STA;
+  
+  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+    Serial.println("Failed to add peer");
+    return;
+  }
+  
+  Serial.println("ESP-NOW initialized");
+  Serial.println("Use /msg <your message> to send text to display");
 }
 
 void IRAM_ATTR buttonISR() {
   buttonPressed = true;
+}
+
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  Serial.print("Message send status: ");
+  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Success" : "Failed");
+}
+
+void sendMessageToDisplay(String msg) {
+  MessageData messageData;
+  msg.toCharArray(messageData.message, sizeof(messageData.message));
+  
+  esp_err_t result = esp_now_send(esp32c3Address, (uint8_t *) &messageData, sizeof(messageData));
+  if (result == ESP_OK) {
+    Serial.println("Message sent via ESP-NOW");
+  } else {
+    Serial.println("Error sending message");
+  }
 }
 
 void loop() {
